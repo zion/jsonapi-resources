@@ -15,6 +15,10 @@ module JSONAPI
     end
 
     module ClassMethods
+      def default_find_related_through(polymorphic = false)
+        polymorphic ? :model : :model
+      end
+
       # Finds Resources using the `filters`. Pagination and sort options are used when provided
       #
       # @param filters [Hash] the filters hash
@@ -103,9 +107,9 @@ module JSONAPI
         sort_criteria = options.fetch(:sort_criteria) { [] }
         order_options = construct_order_options(sort_criteria)
 
-        join_manager = ActiveRelation::JoinManager.new(resource_klass: self,
-                                                       filters: filters,
-                                                       sort_criteria: sort_criteria)
+        join_manager = ActiveRelation::JoinManagerThroughInverse.new(resource_klass: self,
+                                                                     filters: filters,
+                                                                     sort_criteria: sort_criteria)
 
         options[:_relation_helper_options] = {
           context: context,

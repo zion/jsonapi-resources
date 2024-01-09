@@ -9,6 +9,14 @@ module JSONAPI
     end
 
     module ClassMethods
+      def default_find_related_through(polymorphic = false)
+        if polymorphic
+          JSONAPI.configuration.default_find_related_through_polymorphic
+        else
+          JSONAPI.configuration.default_find_related_through
+        end
+      end
+
       # Finds Resources using the `filters`. Pagination and sort options are used when provided
       #
       # @param filters [Hash] the filters hash
@@ -20,9 +28,9 @@ module JSONAPI
       def find(filters, options)
         sort_criteria = options.fetch(:sort_criteria) { [] }
 
-        join_manager = ActiveRelation::JoinManager.new(resource_klass: self,
-                                                       filters: filters,
-                                                       sort_criteria: sort_criteria)
+        join_manager = ActiveRelation::JoinManagerThroughInverse.new(resource_klass: self,
+                                                                     filters: filters,
+                                                                     sort_criteria: sort_criteria)
 
         paginator = options[:paginator]
 
@@ -42,8 +50,8 @@ module JSONAPI
       #
       # @return [Integer] the count
       def count(filters, options)
-        join_manager = ActiveRelation::JoinManager.new(resource_klass: self,
-                                                       filters: filters)
+        join_manager = ActiveRelation::JoinManagerThroughInverse.new(resource_klass: self,
+                                                                     filters: filters)
 
         records = apply_request_settings_to_records(records: records(options),
                                filters: filters,
@@ -103,11 +111,11 @@ module JSONAPI
 
         sort_criteria = options.fetch(:sort_criteria) { [] }
 
-        join_manager = ActiveRelation::JoinManager.new(resource_klass: resource_klass,
-                                                       source_relationship: nil,
-                                                       relationships: linkage_relationships.collect(&:name),
-                                                       sort_criteria: sort_criteria,
-                                                       filters: filters)
+        join_manager = ActiveRelation::JoinManagerThroughInverse.new(resource_klass: resource_klass,
+                                                                     source_relationship: nil,
+                                                                     relationships: linkage_relationships.collect(&:name),
+                                                                     sort_criteria: sort_criteria,
+                                                                     filters: filters)
 
         paginator = options[:paginator]
 
@@ -260,54 +268,319 @@ module JSONAPI
       #    the ResourceInstances matching the filters, sorting, and pagination rules along with any request
       #    additional_field values
       def find_related_fragments(source_fragment, relationship, options)
-        if relationship.polymorphic? # && relationship.foreign_key_on == :self
-          source_resource_klasses = if relationship.foreign_key_on == :self
-                                      relationship.polymorphic_types.collect do |polymorphic_type|
-                                        resource_klass_for(polymorphic_type)
-                                      end
-                                    else
-                                      source.collect { |fragment| fragment.identity.resource_klass }.to_set
-                                    end
-
-          fragments = {}
-          source_resource_klasses.each do |resource_klass|
-            inverse_direct_relationship = _relationship(resource_klass._type.to_s.singularize)
-
-            fragments.merge!(resource_klass.find_related_fragments_from_inverse([source_fragment], inverse_direct_relationship, options, false))
-          end
-          fragments
-        else
-          relationship.resource_klass.find_related_fragments_from_inverse([source_fragment], relationship, options, false)
-        end
+        _find_related_fragments([source_fragment], relationship, false, options)
       end
 
       def find_included_fragments(source_fragments, relationship, options)
-        if relationship.polymorphic? # && relationship.foreign_key_on == :self
-          source_resource_klasses = if relationship.foreign_key_on == :self
-                                      relationship.polymorphic_types.collect do |polymorphic_type|
-                                        resource_klass_for(polymorphic_type)
+        _find_related_fragments(source_fragments, relationship, true, options)
+      end
+
+      def _find_related_fragments(source_fragments, relationship, connect_to_source, options)
+        if relationship.find_related_through == :inverse
+          if relationship.polymorphic?
+            source_resource_klasses = if relationship.foreign_key_on == :self
+                                        relationship.polymorphic_types.collect do |polymorphic_type|
+                                          resource_klass_for(polymorphic_type)
+                                        end
+                                      else
+                                        source_fragments.collect { |fragment| fragment.identity.resource_klass }.to_set
                                       end
-                                    else
-                                      source_fragments.collect { |fragment| fragment.identity.resource_klass }.to_set
-                                    end
+            fragments = {}
+            source_resource_klasses.each do |resource_klass|
+              inverse_direct_relationship = _relationship(resource_klass._type.to_s.singularize)
+              inverse_relationship_klass = inverse_direct_relationship.inverse_relationship_klass
 
-          fragments = {}
-          source_resource_klasses.each do |resource_klass|
-            inverse_direct_relationship = _relationship(resource_klass._type.to_s.singularize)
-
-            fragments.merge!(resource_klass.find_related_fragments_from_inverse(source_fragments, inverse_direct_relationship, options, true))
+              fragments.merge!(resource_klass._find_related_fragments_through_inverse(source_fragments, inverse_relationship_klass, options, connect_to_source))
+            end
+            fragments
+          else
+            inverse_relationship_klass = relationship.inverse_relationship_klass
+            if inverse_relationship_klass.present?
+              relationship.resource_klass._find_related_fragments_through_inverse(source_fragments, inverse_relationship_klass, options, connect_to_source)
+            else
+              raise "missing inverse relationship"
+            end
           end
-          fragments
+        elsif relationship.find_related_through == :primary
+          if relationship.polymorphic?
+            _find_related_polymorphic_fragments_through_primary(source_fragments, relationship, options, connect_to_source)
+          else
+            _find_related_monomorphic_fragments_through_primary(source_fragments, relationship, options, connect_to_source)
+          end
         else
-          relationship.resource_klass.find_related_fragments_from_inverse(source_fragments, relationship, options, true)
+          raise "find_related_through: #{relationship.find_related_through} not supported"
         end
       end
 
-      def find_related_fragments_from_inverse(source, source_relationship, options, connect_source_identity)
-        relationship = source_relationship.resource_klass._relationship(source_relationship.inverse_relationship)
-        raise "missing inverse relationship" unless relationship.present?
+      def _find_related_monomorphic_fragments_through_primary(source_fragments, relationship, options, connect_source_identity)
+        filters = options.fetch(:filters, {})
+        source_ids = source_fragments.collect {|item| item.identity.id}
 
-        parent_resource_klass = relationship.resource_klass
+        include_directives = options.fetch(:include_directives, {})
+        resource_klass = relationship.resource_klass
+        linkage_relationships = resource_klass.to_one_relationships_for_linkage(include_directives[:include_related])
+
+        sort_criteria = []
+        options[:sort_criteria].try(:each) do |sort|
+          field = sort[:field].to_s == 'id' ? resource_klass._primary_key : sort[:field]
+          sort_criteria << { field: field, direction: sort[:direction] }
+        end
+
+        join_manager = ActiveRelation::JoinManagerThroughPrimary.new(resource_klass: self,
+                                                                     source_relationship: relationship,
+                                                                     relationships: linkage_relationships.collect(&:name),
+                                                                     sort_criteria: sort_criteria,
+                                                                     filters: filters)
+
+        paginator = options[:paginator]
+
+        records = apply_request_settings_to_records(records: records_for_source_to_related(options),
+                                                    resource_klass: resource_klass,
+                                                    sort_criteria: sort_criteria,
+                                                    primary_keys: source_ids,
+                                                    paginator: paginator,
+                                                    filters: filters,
+                                                    join_manager: join_manager,
+                                                    options: options)
+
+        resource_table_alias = join_manager.join_details_by_relationship(relationship)[:alias]
+
+        control_fields = [
+          Arel.sql("#{_table_name}.#{_primary_key} AS \"source_id\""),
+          sql_field_with_alias(resource_table_alias, resource_klass._primary_key)
+        ]
+
+        cache_field = resource_klass.attribute_to_model_field(:_cache_field) if options[:cache]
+        if cache_field
+          control_fields << sql_field_with_alias(resource_table_alias, cache_field[:name])
+        end
+
+        linkage_fields = []
+
+        linkage_relationships.each do |linkage_relationship|
+          linkage_relationship_name = linkage_relationship.name
+
+          if linkage_relationship.polymorphic? && linkage_relationship.belongs_to?
+            linkage_relationship.resource_types.each do |resource_type|
+              klass = resource_klass_for(resource_type)
+              linkage_fields << {relationship_name: linkage_relationship_name, resource_klass: klass}
+
+              linkage_table_alias = join_manager.join_details_by_polymorphic_relationship(linkage_relationship, resource_type)[:alias]
+              primary_key = klass._primary_key
+              control_fields << sql_field_with_alias(linkage_table_alias, primary_key)
+            end
+          else
+            klass = linkage_relationship.resource_klass
+            linkage_fields << {relationship_name: linkage_relationship_name, resource_klass: klass}
+
+            linkage_table_alias = join_manager.join_details_by_relationship(linkage_relationship)[:alias]
+            primary_key = klass._primary_key
+            control_fields << sql_field_with_alias(linkage_table_alias, primary_key)
+          end
+        end
+
+        sort_fields = options.dig(:_relation_helper_options, :sort_fields)
+        sort_fields.try(:each) do |field|
+          control_fields << Arel.sql(field)
+        end
+
+        fragments = {}
+
+        rows = records.distinct.pluck(*control_fields)
+        rows.each do |row|
+          rid = JSONAPI::ResourceIdentity.new(resource_klass, row[1])
+
+          fragments[rid] ||= JSONAPI::ResourceFragment.new(rid)
+
+          attributes_offset = 2
+
+          if cache_field
+            fragments[rid].cache = cast_to_attribute_type(row[attributes_offset], cache_field[:type])
+            attributes_offset+= 1
+          end
+
+          source_rid = JSONAPI::ResourceIdentity.new(self, row[0])
+
+          fragments[rid].add_related_from(source_rid)
+
+          linkage_fields.each do |linkage_field|
+            fragments[rid].initialize_related(linkage_field[:relationship_name])
+            related_id = row[attributes_offset]
+            if related_id
+              related_rid = JSONAPI::ResourceIdentity.new(linkage_field[:resource_klass], related_id)
+              fragments[rid].add_related_identity(linkage_field[:relationship_name], related_rid)
+            end
+            attributes_offset+= 1
+          end
+
+          if connect_source_identity
+            related_relationship = resource_klass._relationship(relationship.inverse_relationship)
+            if related_relationship
+              fragments[rid].add_related_identity(related_relationship.name, source_rid)
+            end
+          end
+        end
+
+        fragments
+      end
+
+      # Gets resource identities where the related resource is polymorphic and the resource type and id
+      # are stored on the primary resources. Cache fields will always be on the related resources.
+      def _find_related_polymorphic_fragments_through_primary(source_fragments, relationship, options, connect_source_identity)
+        filters = options.fetch(:filters, {})
+        source_ids = source_fragments.collect {|item| item.identity.id}
+
+        resource_klass = relationship.resource_klass
+        include_directives = options.fetch(:include_directives, {})
+
+        linkage_relationship_paths = []
+
+        resource_types = relationship.resource_types
+
+        resource_types.each do |resource_type|
+          related_resource_klass = resource_klass_for(resource_type)
+          relationships = related_resource_klass.to_one_relationships_for_linkage(include_directives[:include_related])
+          relationships.each do |r|
+            linkage_relationship_paths << "##{resource_type}.#{r.name}"
+          end
+        end
+
+        join_manager = ActiveRelation::JoinManagerThroughPrimary.new(resource_klass: self,
+                                                                     source_relationship: relationship,
+                                                                     relationships: linkage_relationship_paths,
+                                                                     filters: filters)
+
+        paginator = options[:paginator]
+
+        # Note: We will sort by the source table. Without using unions we can't sort on a polymorphic relationship
+        # in any manner that makes sense
+        records = apply_request_settings_to_records(records: records_for_source_to_related(options),
+                                                    resource_klass: resource_klass,
+                                                    sort_primary: true,
+                                                    primary_keys: source_ids,
+                                                    paginator: paginator,
+                                                    filters: filters,
+                                                    join_manager: join_manager,
+                                                    options: options)
+
+        primary_key = concat_table_field(_table_name, _primary_key)
+        related_key = concat_table_field(_table_name, relationship.foreign_key)
+        related_type = concat_table_field(_table_name, relationship.polymorphic_type)
+
+        pluck_fields = [
+          Arel.sql("#{primary_key} AS #{alias_table_field(_table_name, _primary_key)}"),
+          Arel.sql("#{related_key} AS #{alias_table_field(_table_name, relationship.foreign_key)}"),
+          Arel.sql("#{related_type} AS #{alias_table_field(_table_name, relationship.polymorphic_type)}")
+        ]
+
+        # Get the additional fields from each relation. There's a limitation that the fields must exist in each relation
+
+        relation_positions = {}
+        relation_index = pluck_fields.length
+
+        # Add resource specific fields
+        if resource_types.nil? || resource_types.length == 0
+          # :nocov:
+          warn "No resource types found for polymorphic relationship."
+          # :nocov:
+        else
+          resource_types.try(:each) do |type|
+            related_klass = resource_klass_for(type.to_s)
+
+            cache_field = related_klass.attribute_to_model_field(:_cache_field) if options[:cache]
+
+            table_alias = join_manager.source_join_details(type)[:alias]
+
+            cache_offset = relation_index
+            if cache_field
+              pluck_fields << sql_field_with_alias(table_alias, cache_field[:name])
+              relation_index+= 1
+            end
+
+            relation_positions[type] = {relation_klass: related_klass,
+                                        cache_field: cache_field,
+                                        cache_offset: cache_offset}
+          end
+        end
+
+        # Add to_one linkage fields
+        linkage_fields = []
+        linkage_offset = relation_index
+
+        linkage_relationship_paths.each do |linkage_relationship_path|
+          path = JSONAPI::Path.new(resource_klass: self,
+                                   path_string: "#{relationship.name}#{linkage_relationship_path}",
+                                   ensure_default_field: false)
+
+          linkage_relationship = path.segments[-1].relationship
+
+          if linkage_relationship.polymorphic? && linkage_relationship.belongs_to?
+            linkage_relationship.resource_types.each do |resource_type|
+              klass = resource_klass_for(resource_type)
+              linkage_fields << {relationship: linkage_relationship, resource_klass: klass}
+
+              linkage_table_alias = join_manager.join_details_by_polymorphic_relationship(linkage_relationship, resource_type)[:alias]
+              primary_key = klass._primary_key
+              pluck_fields << sql_field_with_alias(linkage_table_alias, primary_key)
+            end
+          else
+            klass = linkage_relationship.resource_klass
+            linkage_fields << {relationship: linkage_relationship, resource_klass: klass}
+
+            linkage_table_alias = join_manager.join_details_by_relationship(linkage_relationship)[:alias]
+            primary_key = klass._primary_key
+            pluck_fields << sql_field_with_alias(linkage_table_alias, primary_key)
+          end
+        end
+
+        rows = records.distinct.pluck(*pluck_fields)
+
+        related_fragments = {}
+
+        rows.each do |row|
+          unless row[1].nil? || row[2].nil?
+            related_klass = resource_klass_for(row[2])
+
+            rid = JSONAPI::ResourceIdentity.new(related_klass, row[1])
+            related_fragments[rid] ||= JSONAPI::ResourceFragment.new(rid)
+
+            source_rid = JSONAPI::ResourceIdentity.new(self, row[0])
+            related_fragments[rid].add_related_from(source_rid)
+
+            if connect_source_identity
+              related_relationship = related_klass._relationship(relationship.inverse_relationship)
+              if related_relationship
+                related_fragments[rid].add_related_identity(related_relationship.name, source_rid)
+              end
+            end
+
+            relation_position = relation_positions[row[2].underscore.pluralize]
+            model_fields = relation_position[:model_fields]
+            cache_field = relation_position[:cache_field]
+            cache_offset = relation_position[:cache_offset]
+            field_offset = relation_position[:field_offset]
+
+            if cache_field
+              related_fragments[rid].cache = cast_to_attribute_type(row[cache_offset], cache_field[:type])
+            end
+
+            linkage_fields.each_with_index do |linkage_field_details, idx|
+              relationship = linkage_field_details[:relationship]
+              related_fragments[rid].initialize_related(relationship.name)
+              related_id = row[linkage_offset + idx]
+              if related_id
+                related_rid = JSONAPI::ResourceIdentity.new(linkage_field_details[:resource_klass], related_id)
+                related_fragments[rid].add_related_identity(relationship.name, related_rid)
+              end
+            end
+          end
+        end
+
+        related_fragments
+      end
+
+      def _find_related_fragments_through_inverse(source, inverse_relationship_klass, options, connect_source_identity)
+        parent_resource_klass = inverse_relationship_klass.resource_klass
 
         include_directives = options.fetch(:include_directives, {})
 
@@ -331,11 +604,11 @@ module JSONAPI
           end
         end
 
-        join_manager = ActiveRelation::JoinManager.new(resource_klass: self,
-                                                       source_relationship: relationship,
-                                                       relationships: linkage_relationships.collect(&:name),
-                                                       sort_criteria: sort_criteria,
-                                                       filters: filters)
+        join_manager = ActiveRelation::JoinManagerThroughInverse.new(resource_klass: self,
+                                                                     source_relationship: inverse_relationship_klass,
+                                                                     relationships: linkage_relationships.collect(&:name),
+                                                                     sort_criteria: sort_criteria,
+                                                                     filters: filters)
 
         paginator = options[:paginator]
 
@@ -352,7 +625,7 @@ module JSONAPI
         if options[:cache]
           # This alias is going to be resolve down to the model's table name and will not actually be an alias
           resource_table_alias = self._table_name
-          parent_table_alias = join_manager.join_details_by_relationship(relationship)[:alias]
+          parent_table_alias = join_manager.join_details_by_relationship(inverse_relationship_klass)[:alias]
 
           pluck_fields = [
             sql_field_with_alias(resource_table_alias, self._primary_key),
@@ -400,7 +673,7 @@ module JSONAPI
             fragments[rid].add_related_from(parent_rid)
 
             if connect_source_identity
-              fragments[rid].add_related_identity(relationship.name, parent_rid)
+              fragments[rid].add_related_identity(inverse_relationship_klass.name, parent_rid)
             end
 
             attributes_offset = 2
@@ -452,7 +725,7 @@ module JSONAPI
             end
           end
 
-          parent_table_alias = join_manager.join_details_by_relationship(relationship)[:alias]
+          parent_table_alias = join_manager.join_details_by_relationship(inverse_relationship_klass)[:alias]
           source_field = sql_field_with_fixed_alias(parent_table_alias, parent_resource_klass._primary_key, "jr_source_id")
 
           records = records.select(concat_table_field(_table_name, Arel.star), source_field)
@@ -471,7 +744,7 @@ module JSONAPI
             parent_rid = JSONAPI::ResourceIdentity.new(parent_resource_klass, resource._model.attributes['jr_source_id'])
 
             if connect_source_identity
-              fragments[rid].add_related_identity(relationship.name, parent_rid)
+              fragments[rid].add_related_identity(inverse_relationship_klass.name, parent_rid)
             end
 
             fragments[rid].add_related_from(parent_rid)
@@ -510,9 +783,9 @@ module JSONAPI
         filters = options.fetch(:filters, {})
 
         # Joins in this case are related to the related_klass
-        join_manager = ActiveRelation::JoinManager.new(resource_klass: self,
-                                                       source_relationship: relationship,
-                                                       filters: filters)
+        join_manager = ActiveRelation::JoinManagerThroughInverse.new(resource_klass: self,
+                                                                     source_relationship: relationship,
+                                                                     filters: filters)
 
         records = apply_request_settings_to_records(records: records(options),
                                                     resource_klass: self,
@@ -647,7 +920,7 @@ module JSONAPI
       end
 
       def apply_request_settings_to_records(records:,
-                                            join_manager: ActiveRelation::JoinManager.new(resource_klass: self),
+                                            join_manager: ActiveRelation::JoinManagerThroughInverse.new(resource_klass: self),
                                             resource_klass: self,
                                             source_ids: nil,
                                             filters: {},
