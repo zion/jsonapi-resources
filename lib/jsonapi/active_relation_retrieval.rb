@@ -4,7 +4,7 @@ module JSONAPI
   module ActiveRelationRetrieval
     include ::JSONAPI::RelationRetrieval
 
-    def find_related_ids(relationship, options = {})
+    def find_related_ids(relationship, options)
       self.class.find_related_fragments(self, relationship, options).keys.collect { |rid| rid.id }
     end
 
@@ -17,7 +17,7 @@ module JSONAPI
       # @option options [Hash] :include_directives The `include_directives`
       #
       # @return [Array<Resource>] the Resource instances matching the filters, sorting and pagination rules.
-      def find(filters, options = {})
+      def find(filters, options)
         sort_criteria = options.fetch(:sort_criteria) { [] }
 
         join_manager = ActiveRelation::JoinManager.new(resource_klass: self,
@@ -41,7 +41,7 @@ module JSONAPI
       # @option options [Hash] :context The context of the request, set in the controller
       #
       # @return [Integer] the count
-      def count(filters, options = {})
+      def count(filters, options)
         join_manager = ActiveRelation::JoinManager.new(resource_klass: self,
                                                        filters: filters)
 
@@ -57,7 +57,7 @@ module JSONAPI
       #
       # @param key the primary key of the resource to find
       # @option options [Hash] :context The context of the request, set in the controller
-      def find_by_key(key, options = {})
+      def find_by_key(key, options)
         record = find_record_by_key(key, options)
         resource_for(record, options[:context])
       end
@@ -66,7 +66,7 @@ module JSONAPI
       #
       # @param keys [Array<key>] Array of primary keys to find resources for
       # @option options [Hash] :context The context of the request, set in the controller
-      def find_by_keys(keys, options = {})
+      def find_by_keys(keys, options)
         records = find_records_by_keys(keys, options)
         resources_for(records, options[:context])
       end
@@ -76,7 +76,7 @@ module JSONAPI
       #
       # @param keys [Array<key>] Array of primary keys to find resources for
       # @option options [Hash] :context The context of the request, set in the controller
-      def find_to_populate_by_keys(keys, options = {})
+      def find_to_populate_by_keys(keys, options)
         records = records_for_populate(options).where(_primary_key => keys)
         resources_for(records, options[:context])
       end
@@ -93,7 +93,7 @@ module JSONAPI
       # @return [Hash{ResourceIdentity => {identity: => ResourceIdentity, cache: cache_field}]
       #    the ResourceInstances matching the filters, sorting, and pagination rules along with any request
       #    additional_field values
-      def find_fragments(filters, options = {})
+      def find_fragments(filters, options)
         include_directives = options.fetch(:include_directives, {})
         resource_klass = self
 
@@ -259,7 +259,7 @@ module JSONAPI
       # @return [Hash{ResourceIdentity => {identity: => ResourceIdentity, cache: cache_field, related: {relationship_name: [] }}}]
       #    the ResourceInstances matching the filters, sorting, and pagination rules along with any request
       #    additional_field values
-      def find_related_fragments(source_fragment, relationship, options = {})
+      def find_related_fragments(source_fragment, relationship, options)
         if relationship.polymorphic? # && relationship.foreign_key_on == :self
           source_resource_klasses = if relationship.foreign_key_on == :self
                                       relationship.polymorphic_types.collect do |polymorphic_type|
@@ -498,11 +498,11 @@ module JSONAPI
       #
       # @return [Integer] the count
 
-      def count_related(source, relationship, options = {})
+      def count_related(source, relationship, options)
         relationship.resource_klass.count_related_from_inverse(source, relationship, options)
       end
 
-      def count_related_from_inverse(source_resource, source_relationship, options = {})
+      def count_related_from_inverse(source_resource, source_relationship, options)
         relationship = source_relationship.resource_klass._relationship(source_relationship.inverse_relationship)
 
         related_klass = relationship.resource_klass
@@ -541,7 +541,7 @@ module JSONAPI
       # @option options [Hash] :context The context of the request, set in the controller
       #
       # @return [ActiveRecord::Relation]
-      def records_base(_options = {})
+      def records_base(_options)
         _model_class.all
       end
 
@@ -551,7 +551,7 @@ module JSONAPI
       # @option options [Hash] :context The context of the request, set in the controller
       #
       # @return [ActiveRecord::Relation]
-      def records(options = {})
+      def records(options)
         records_base(options)
       end
 
@@ -562,7 +562,7 @@ module JSONAPI
       # @option options [Hash] :context The context of the request, set in the controller
       #
       # @return [ActiveRecord::Relation]
-      def records_for_populate(options = {})
+      def records_for_populate(options)
         records_base(options)
       end
 
@@ -571,7 +571,7 @@ module JSONAPI
       # @option options [Hash] :context The context of the request, set in the controller
       #
       # @return [ActiveRecord::Relation]
-      def records_for_source_to_related(options = {})
+      def records_for_source_to_related(options)
         records_base(options)
       end
 
@@ -636,13 +636,13 @@ module JSONAPI
 
       # protected
 
-      def find_record_by_key(key, options = {})
+      def find_record_by_key(key, options)
         record = apply_request_settings_to_records(records: records(options), primary_keys: key, options: options).first
         fail JSONAPI::Exceptions::RecordNotFound.new(key) if record.nil?
         record
       end
 
-      def find_records_by_keys(keys, options = {})
+      def find_records_by_keys(keys, options)
         apply_request_settings_to_records(records: records(options), primary_keys: keys, options: options)
       end
 
@@ -838,7 +838,7 @@ module JSONAPI
         %{"#{field.to_s}"}
       end
 
-      def apply_filters(records, filters, options = {})
+      def apply_filters(records, filters, options)
         if filters
           filters.each do |filter, value|
             records = apply_filter(records, filter, value, options)
@@ -864,7 +864,7 @@ module JSONAPI
         concat_table_field(table_alias, field_segment.delegated_field_name)
       end
 
-      def apply_filter(records, filter, value, options = {})
+      def apply_filter(records, filter, value, options)
         strategy = _allowed_filters.fetch(filter.to_sym, Hash.new)[:apply]
 
         if strategy

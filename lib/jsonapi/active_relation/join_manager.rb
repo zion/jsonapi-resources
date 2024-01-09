@@ -77,7 +77,7 @@ module JSONAPI
         @join_details[segment]
       end
 
-      def self.get_join_arel_node(records, options = {})
+      def self.get_join_arel_node(records, options)
         init_join_sources = records.arel.join_sources
         init_join_sources_length = init_join_sources.length
 
