@@ -9,6 +9,10 @@ module JSONAPI
     end
 
     module ClassMethods
+      def allowed_related_through
+        @allowed_related_through ||= [:primary]
+      end
+
       def default_find_related_through(polymorphic = false)
         polymorphic ? :primary : :primary
       end

@@ -15,8 +15,12 @@ module JSONAPI
     end
 
     module ClassMethods
+      def allowed_related_through
+        @allowed_related_through ||= [:model_includes]
+      end
+
       def default_find_related_through(polymorphic = false)
-        polymorphic ? :model : :model
+        polymorphic ? :model_includes : :model_includes
       end
 
       # Finds Resources using the `filters`. Pagination and sort options are used when provided

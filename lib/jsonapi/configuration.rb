@@ -178,9 +178,12 @@ module JSONAPI
       # Available strategies:
       # 'JSONAPI::ActiveRelationRetrieval' - A configurable retrieval strategy
       # 'JSONAPI::ActiveRelationRetrievalV09' - Retrieves resources using the v0.9.x approach. This uses rails'
-      # `includes` method to retrieve related models. This requires overriding the `records_for` method on the resource
-      # to control filtering of included resources.
-      # 'JSONAPI::ActiveRelationRetrievalV10' - Retrieves resources using the v0.10.x approach
+      #   `includes` method to retrieve related models. This requires overriding the `records_for` method on the
+      #   resource to control filtering of included resources.
+      # 'JSONAPI::ActiveRelationRetrievalV10' - Retrieves resources using the v0.10.x approach. While this is mostly
+      #   equivalent to using the default JSONAPI::ActiveRelationRetrieval strategy with the
+      #   `default_find_related_through` and `default_find_related_through_polymorphic` options set to `:primary`,
+      #   it does perform a two phased query to retrieve resources like v0.10.x. did and is therefore less efficient.
       # Custom - Specify the a custom retrieval strategy module name as a string
       # :none
       # :self

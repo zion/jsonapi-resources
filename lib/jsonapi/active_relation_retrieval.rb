@@ -9,6 +9,10 @@ module JSONAPI
     end
 
     module ClassMethods
+      def allowed_related_through
+        @allowed_related_through ||= [:inverse, :primary]
+      end
+
       def default_find_related_through(polymorphic = false)
         if polymorphic
           JSONAPI.configuration.default_find_related_through_polymorphic
@@ -127,6 +131,11 @@ module JSONAPI
                                options: options)
 
         if options[:cache]
+          # When using caching the a two step process is used. First the records ids are retrieved and then the
+          # records are retrieved using the ids. Then the ids are used to query the database again to get the
+          # cache misses. In the second phase the records are not sorted or paginated and the `records_for_populate`
+          # method is used to ensure any dependent includes or custom database fields are calculated.
+
           # This alias is going to be resolve down to the model's table name and will not actually be an alias
           resource_table_alias = resource_klass._table_name
 
@@ -197,6 +206,10 @@ module JSONAPI
             warn "Performance issue detected: `#{self.name.to_s}.records` returned non-normalized results in `#{self.name.to_s}.find_fragments`."
           end
         else
+          # When not using caching resources can be generated after querying. The `records_for_populate`
+          # method is merged in to ensure any dependent includes or custom database fields are calculated.
+          records = records.merge(records_for_populate(options))
+
           linkage_fields = []
 
           linkage_relationships.each do |linkage_relationship|
@@ -320,10 +333,16 @@ module JSONAPI
         resource_klass = relationship.resource_klass
         linkage_relationships = resource_klass.to_one_relationships_for_linkage(include_directives[:include_related])
 
-        sort_criteria = []
-        options[:sort_criteria].try(:each) do |sort|
-          field = sort[:field].to_s == 'id' ? resource_klass._primary_key : sort[:field]
-          sort_criteria << { field: field, direction: sort[:direction] }
+        # Do not sort the related_fragments. This can be keyed off `connect_source_identity` to indicate whether this
+        # is a related resource primary step vs. an include step.
+        sort_related_fragments = !connect_source_identity
+
+        if sort_related_fragments
+          sort_criteria = []
+          options[:sort_criteria].try(:each) do |sort|
+            field = sort[:field].to_s == 'id' ? resource_klass._primary_key : sort[:field]
+            sort_criteria << { field: field, direction: sort[:direction] }
+          end
         end
 
         join_manager = ActiveRelation::JoinManagerThroughPrimary.new(resource_klass: self,
