@@ -296,7 +296,18 @@ class PostsControllerTest < ActionController::TestCase
   end
 
   def test_index_include_one_level_query_count
-    assert_query_count(through_primary? ? 4 : 2) do
+    expected_count = case
+                     when testing_v09?
+                       2
+                     when testing_v10?
+                       4
+                     when through_primary?
+                       3
+                     else
+                       2
+                     end
+
+    assert_query_count(expected_count) do
       assert_cacheable_get :index, params: {include: 'author'}
     end
 
@@ -304,7 +315,18 @@ class PostsControllerTest < ActionController::TestCase
   end
 
   def test_index_include_two_levels_query_count
-    assert_query_count(through_primary? ? 6 : 3) do
+    expected_count = case
+                     when testing_v09?
+                       3
+                     when testing_v10?
+                       6
+                     when through_primary?
+                       5
+                     else
+                       3
+                     end
+
+    assert_query_count(expected_count) do
       assert_cacheable_get :index, params: { include: 'author,author.comments' }
     end
     assert_response :success
@@ -355,7 +377,7 @@ class PostsControllerTest < ActionController::TestCase
   end
 
   def test_filter_relationship_single
-    assert_query_count(through_primary? ? 2 : 1) do
+    assert_query_count(testing_v10? ? 2 : 1) do
       assert_cacheable_get :index, params: {filter: {tags: '505,501'}}
     end
     assert_response :success
@@ -366,7 +388,7 @@ class PostsControllerTest < ActionController::TestCase
   end
 
   def test_filter_relationships_multiple
-    assert_query_count(through_primary? ? 2 : 1) do
+    assert_query_count(testing_v10? ? 2 : 1) do
       assert_cacheable_get :index, params: { filter: { tags: '505,501', comments: '3' } }
     end
     assert_response :success
@@ -3303,7 +3325,18 @@ class Api::V2::BooksControllerTest < ActionController::TestCase
 
     with_jsonapi_config_changes do
       JSONAPI.configuration.json_key_format = :dasherized_key
-      assert_query_count(through_primary? ? 5 : 3) do
+      expected_count = case
+                       when testing_v09?
+                         3
+                       when testing_v10?
+                         5
+                       when through_primary?
+                         4
+                       else
+                         3
+                       end
+
+      assert_query_count(expected_count) do
         assert_cacheable_get :index, params: { include: 'book-comments' }
       end
       assert_response :success
@@ -3317,7 +3350,18 @@ class Api::V2::BooksControllerTest < ActionController::TestCase
     with_jsonapi_config_changes do
       JSONAPI.configuration.json_key_format = :dasherized_key
 
-      assert_query_count(through_primary? ? 7 : 4) do
+      expected_count = case
+                       when testing_v09?
+                         4
+                       when testing_v10?
+                         7
+                       when through_primary?
+                         6
+                       else
+                         4
+                       end
+
+      assert_query_count(expected_count) do
         assert_cacheable_get :index, params: { include: 'book-comments,book-comments.author' }
       end
       assert_response :success
@@ -3451,7 +3495,18 @@ class Api::V2::BooksControllerTest < ActionController::TestCase
 
     with_jsonapi_config_changes do
       JSONAPI.configuration.json_key_format = :dasherized_key
-      assert_query_count(through_primary? ? 5 : 3) do
+      expected_count = case
+                       when testing_v09?
+                         3
+                       when testing_v10?
+                         5
+                       when through_primary?
+                         4
+                       else
+                         3
+                       end
+
+      assert_query_count(expected_count) do
         assert_cacheable_get :index, params: { filter: { id: '0' }, include: 'book-comments' }
         assert_response :success
         assert_equal 1, json_response['data'].size
@@ -3468,7 +3523,7 @@ class Api::V2::BooksControllerTest < ActionController::TestCase
       JSONAPI.configuration.top_level_meta_include_record_count = true
       JSONAPI.configuration.json_key_format = :dasherized_key
 
-      assert_query_count(through_primary? ? 3 : 2) do
+      assert_query_count(testing_v10? ? 3 : 2) do
         assert_cacheable_get :index, params: { page: { offset: 50, limit: 12 } }
         assert_response :success
         assert_equal 12, json_response['data'].size
@@ -3485,7 +3540,19 @@ class Api::V2::BooksControllerTest < ActionController::TestCase
 
       Api::V2::BookResource.paginator :offset
       JSONAPI.configuration.top_level_meta_include_record_count = true
-      assert_query_count(through_primary? ? 5 : 3) do
+
+      expected_count = case
+                       when testing_v09?
+                         3
+                       when testing_v10?
+                         5
+                       when through_primary?
+                         4
+                       else
+                         3
+                       end
+
+      assert_query_count(expected_count) do
         assert_cacheable_get :index, params: { page: { offset: 0, limit: 12 }, include: 'book-comments' }
         assert_response :success
         assert_equal 12, json_response['data'].size
@@ -3504,7 +3571,19 @@ class Api::V2::BooksControllerTest < ActionController::TestCase
       JSONAPI.configuration.json_key_format = :dasherized_key
       JSONAPI.configuration.top_level_meta_include_record_count = true
       Api::V2::BookResource.paginator :offset
-      assert_query_count(through_primary? ? 7 : 4) do
+
+      expected_count = case
+                       when testing_v09?
+                         4
+                       when testing_v10?
+                         7
+                       when through_primary?
+                         6
+                       else
+                         4
+                       end
+
+      assert_query_count(expected_count) do
         assert_cacheable_get :index, params: { page: { offset: 0, limit: 12 }, include: 'book-comments.author' }
         assert_response :success
         assert_equal 12, json_response['data'].size
@@ -3522,7 +3601,7 @@ class Api::V2::BooksControllerTest < ActionController::TestCase
       Api::V2::BookResource.paginator :offset
       JSONAPI.configuration.json_key_format = :dasherized_key
       JSONAPI.configuration.top_level_meta_include_record_count = true
-      assert_query_count(through_primary? ? 3 : 2) do
+      assert_query_count(testing_v10? ? 3 : 2) do
         assert_cacheable_get :index, params: { page: { offset: 50, limit: 12 }, filter: { banned: 'true' } }
       end
       assert_response :success
@@ -3539,7 +3618,7 @@ class Api::V2::BooksControllerTest < ActionController::TestCase
       Api::V2::BookResource.paginator :offset
       JSONAPI.configuration.json_key_format = :dasherized_key
       JSONAPI.configuration.top_level_meta_include_record_count = true
-      assert_query_count(through_primary? ? 3 : 2) do
+      assert_query_count(testing_v10? ? 3 : 2) do
         assert_cacheable_get :index, params: { page: { offset: 50, limit: 12 }, filter: { banned: 'false' }, fields: { books: 'id,title' } }
       end
       assert_response :success
@@ -3557,7 +3636,7 @@ class Api::V2::BooksControllerTest < ActionController::TestCase
 
       Api::V2::BookResource.paginator :offset
       JSONAPI.configuration.top_level_meta_include_record_count = true
-      assert_query_count(through_primary? ? 3 : 2) do
+      assert_query_count(testing_v10? ? 3 : 2) do
         assert_cacheable_get :index, params: { page: { offset: 590, limit: 20 } }
       end
       assert_response :success
@@ -3574,7 +3653,18 @@ class Api::V2::BooksControllerTest < ActionController::TestCase
     with_jsonapi_config_changes do
       JSONAPI.configuration.json_key_format = :dasherized_key
 
-      assert_query_count(through_primary? ? 4 : 2) do
+      expected_count = case
+                       when testing_v09?
+                         2
+                       when testing_v10?
+                         4
+                       when through_primary?
+                         3
+                       else
+                         2
+                       end
+
+      assert_query_count(expected_count) do
         assert_cacheable_get :index, params: { filter: { id: '0,1,2,3,4' }, include: 'book-comments' }
       end
       assert_response :success
@@ -3695,7 +3785,7 @@ class Api::V2::BookCommentsControllerTest < ActionController::TestCase
 
   def test_book_comments_all_for_admin
     $test_user = Person.find(1005)
-    assert_query_count(through_primary? ? 2 : 1) do
+    assert_query_count(testing_v10? ? 2 : 1) do
       assert_cacheable_get :index
     end
     assert_response :success
@@ -3704,7 +3794,7 @@ class Api::V2::BookCommentsControllerTest < ActionController::TestCase
 
   def test_book_comments_unapproved_context_based
     $test_user = Person.find(1005)
-    assert_query_count(through_primary? ? 2 : 1) do
+    assert_query_count(testing_v10? ? 2 : 1) do
       assert_cacheable_get :index, params: { filter: { approved: 'false' } }
     end
     assert_response :success
@@ -3713,7 +3803,7 @@ class Api::V2::BookCommentsControllerTest < ActionController::TestCase
 
   def test_book_comments_exclude_unapproved_context_based
     $test_user = Person.find(1001)
-    assert_query_count(through_primary? ? 2 : 1) do
+    assert_query_count(testing_v10? ? 2 : 1) do
       assert_cacheable_get :index
     end
     assert_response :success

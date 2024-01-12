@@ -700,6 +700,10 @@ class ActionController::TestCase
     JSONAPI.configuration.default_find_related_through == :primary
   end
 
+  def testing_v10?
+    JSONAPI.configuration.default_resource_retrieval_strategy == 'JSONAPI::ActiveRelationRetrievalV10'
+  end
+
   def testing_v09?
     JSONAPI.configuration.default_resource_retrieval_strategy == 'JSONAPI::ActiveRelationRetrievalV09'
   end
