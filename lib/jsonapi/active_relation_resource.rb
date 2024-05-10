@@ -847,7 +847,7 @@ module JSONAPI
       end
 
       def quote(field)
-        "\"#{field.to_s}\""
+        ActiveRecord::Base.connection.quote_table_name(field)
       end
 
       def apply_filters(records, filters, options = {})
